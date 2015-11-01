@@ -1294,7 +1294,7 @@ fflush(stdout);
 
 #if 1
 		// add in the effects of counter torque
-		if(flags & (SFMFlagBellyHeight | SFMFlagLandedState))
+		if(1)
 		{
 			float counterTorque = model->throttle_coeff;
 			dir->heading += 0.1 * counterTorque *  time_compensation * time_compression;
