@@ -1292,7 +1292,7 @@ fflush(stdout);
 			thrust_output *= (GroundEffectCoeff-1.0f);
 		}
 
-#if 0
+#if 1
 		// add in the effects of counter torque
 		if(flags & (SFMFlagBellyHeight | SFMFlagLandedState))
 		{
