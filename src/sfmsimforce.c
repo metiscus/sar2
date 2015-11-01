@@ -970,6 +970,17 @@ int SFMForceApplyNatural(
 	return(0);
 }
 
+float ClampValue(float min, float max, float value)
+{
+	if(value > max) return max;
+	if(value < min) return min;
+	return value;
+}
+
+float Interpolate(float min, float max, float ratio)
+{
+	return (max-min) * ClampValue(0, 1, ratio) + min;
+}
 /*
  *	Apply artificial forces; thrust and brakes.
  *
@@ -1242,8 +1253,10 @@ fflush(stdout);
 		 * When the helicopter pitches forward and banks, the
 		 * heading will then change.
 		 */
+		// The aircraft airspeed is used in several calculations below
 		float Airspeed = sqrtf(vel->x*vel->x + vel->y*vel->y + vel->z*vel->z);
-		//fprintf(stderr, "[mab] airspeed: %f\n", Airspeed);
+		// relative_pitch is the actual helicopter picth plus the inflow component of the airspeed
+		// This ensures the helicopter will turn at a standard rate (15 degree bank 100 knots 3 degrees a second)
 		float relative_pitch = sin_pitch + 0.5f * atan2(fabs(vel->x) + fabs(vel->y), Airspeed);
 		//fprintf(stderr, "[mab] relative pitch: %f\n", relative_pitch);
 		if(!model->landed_state)
@@ -1252,30 +1265,41 @@ fflush(stdout);
 			    (0.2 * PI) *
 			    time_compensation * time_compression)
 		    );
-		// Determine if we have passed through etl
+
+		// Rotor efficiency is increased within one rotor diameter of the ground
 		SFMPositionStruct	*pos = &model->position;
 		float GroundEffectAltitude = 16.0;
 		int isIGE = pos->z < GroundEffectAltitude / 2.0;
 		float GroundEffectCoeff = 1.0 + 0.876f;
-		float GroundEffectQty = 0.0f;
+
 		if(isIGE)
 		{
-			float thrust = thrust_output;
-			thrust_output = 1.2 * thrust_output;
-			//fprintf(stderr, "[mab] ige thrust bonus: %f => %f\n", thrust, thrust_output);
+			// Blend in the effects of the ground effect
+			float IGERatio = ClampValue(0, 1, (GroundEffectAltitude - pos->z) / GroundEffectAltitude);
+			thrust_output = ClampValue(thrust_output, 1.2 * thrust_output, 1.2 * IGERatio * thrust_output);
 		}
 
-		float ETLAirspeed = 16.0f;
-		int hasETL = Airspeed > ETLAirspeed;
+		// The rotor system generates additional (induced) power as it begins to move forward
+		// through the air. This effect is known as effective translational lift and happens
+		// around 12-18 knots of airspeed. This effect only takes into account airflow over
+		// the rotor system. Here I crudely only consider planar velocity.
+		float ETLAirspeedKTS = 16.0f;
+		float TranslationalAirspeed = sqrtf(vel->x*vel->x + vel->y*vel->y);
+		int hasETL = TranslationalAirspeed * 1.983 > ETLAirspeedKTS;
 		if(!hasETL)
 		{
 			float thrust = thrust_output;
 			thrust_output *= (GroundEffectCoeff-1.0f);
-			//fprintf(stderr, "[mab] non etl thrust penalty: %f => %f\n", thrust, thrust_output);
 		}
 
-		//fprintf(stderr, "[mab] HeadingFromBank %f %f %f %f\n", dir->heading, sin_pitch, asin(sin_bank)*180.0/3.14159265, time_compensation*time_compression);
-
+#if 0
+		// add in the effects of counter torque
+		if(flags & (SFMFlagBellyHeight | SFMFlagLandedState))
+		{
+			float counterTorque = model->throttle_coeff;
+			dir->heading += 0.1 * counterTorque *  time_compensation * time_compression;
+		}
+#endif
 	        /* XY Plane: Pitch and bank applied force */
 
 	        /* Calculate i force compoent (obj relative) */
@@ -1297,8 +1321,6 @@ fflush(stdout);
 		    atan2(dj, di) + dir->heading
 		);
 
-		//fprintf(stderr, "[mab] throttle %f\n", model->throttle_coeff);
-		//theta += 1.0f * model->throttle_coeff * time_compensation * time_compression;
 		/* Calculate speed on the x y velocity vector plane */
 		model->speed = SFMHypot2(di, dj);
 
@@ -1307,8 +1329,7 @@ fflush(stdout);
 		pos->x += r * sin(theta);
 		pos->y += r * cos(theta);
 
-
-		/* Vertical velocity */
+	  /* Vertical velocity */
 /*
 		dk = (vel->z / 1.60) +
 		    (((thrust_output * cos_pitch * cos_bank * tc_min) -
